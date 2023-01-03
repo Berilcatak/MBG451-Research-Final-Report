@@ -307,6 +307,7 @@ sessionInfo()
 
 ```
 ```{r}
+## I hope I did the homework right. I got a little help from the "Summer Internship, R Stuff" videos of you from the Teams Ekiz Lab Channel. Thank you for the information that you shared with us for the whole time sir.
 
 ```
 
