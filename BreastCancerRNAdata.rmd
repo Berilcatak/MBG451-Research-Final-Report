@@ -1,0 +1,313 @@
+---
+author: "Beril Çatak"
+title: "Breast Cancer RNA data"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+
+# Download data
+
+
+"Harmonized data" will be downloaded from **TCGA** as a `SummarizedExperiment` object:
+
+More details on this object type can be seen [here](https://bioconductor.org/packages/devel/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html)
+
+## RNAseq data
+
+```{r, eval = F}
+
+## Install TCGA if you don't have it (restart session after installing)
+
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# 
+# BiocManager::install("TCGAbiolinks")
+
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+
+# Gene expression aligned against hg38
+query <- GDCquery(
+  project = "TCGA-BRCA",
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification", 
+  workflow.type = "STAR - Counts")
+
+
+GDCdownload(query = query)
+
+BRCA_rna <- GDCprepare(query = query)
+
+saveRDS(BRCA_rna, "BRCA_rna.rds")
+
+```
+
+
+## miRNAseq data
+
+```{r, eval=F}
+
+query <- GDCquery(
+  project = "TCGA-BRCA",
+  data.category = "Transcriptome Profiling",
+  data.type = "miRNA Expression Quantification")
+
+
+GDCdownload(query = query)
+
+BRCA_mir <- GDCprepare(query = query)
+
+saveRDS(BRCA_mir, "BRCA_mir.rds")
+
+
+```
+
+## Subtype information
+
+```{r, eval=F}
+
+BRCA_subtype <- TCGAquery_subtype("BRCA")
+
+saveRDS(BRCA_subtype, "BRCA_subtype.rds")
+
+```
+
+
+
+
+# Explore data
+
+
+
+
+```{r}
+
+BRCA_rna <- readRDS("BRCA_rna.rds")
+
+dim(BRCA_rna)
+
+# Extract RNAseq data
+rna <- assay(BRCA_rna)
+
+rna[1:3, 1:3]
+
+```
+
+
+
+```{r}
+
+# Extract gene information
+gene_data <- as.data.frame(rowData(BRCA_rna))
+
+gene_data[1:10, 1:10]
+
+
+anyDuplicated(gene_data$gene_id)
+
+anyDuplicated(gene_data$gene_name)
+
+sum(duplicated(gene_data$gene_name))
+
+dup_genes <- duplicated(gene_data$gene_name)| duplicated(gene_data$gene_name, fromLast=F)
+
+View(gene_data[dup_genes, ])
+
+
+
+
+
+```
+
+```{r}
+# dealing with duplicate gene ids
+
+library(dplyr)
+
+gene_data <- gene_data %>% 
+  mutate(duplicated_name = duplicated(gene_name) | duplicated(gene_name, fromLast=T)) %>% 
+  mutate(new_name = case_when(
+    duplicated_name == TRUE ~ paste(gene_name, gene_id, sep = "_"),
+    duplicated_name == FALSE ~ gene_name,
+    TRUE ~ "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  )) %>% 
+  mutate(new_name = make.names(new_name))
+
+## anyDuplicated(df$gene_name)
+## anyDuplicated(df$new_name)
+
+```
+
+
+```{r, fig.width=8, fig.height=}
+
+nrow(rna)
+
+boxplot(rna[,1:25])
+
+boxplot(log1p(rna[,1:25]))
+
+
+norm_rna <- edgeR::cpm(rna)
+
+norm_rna <- log(norm_rna+1, base = 10)
+
+boxplot(norm_rna[, 1:10])
+
+dim(norm_rna)
+
+identical(rownames(norm_rna), gene_data$gene_id)
+
+rownames(norm_rna) <- gene_data$new_name
+
+eval(gene_data)   # I added this part, it might not be true.
+
+```
+
+
+
+```{r}
+
+library(dplyr)
+# Extract patient data
+patient_data <- as.data.frame(colData(BRCA_rna))
+
+patient_data[1:25, 1:25]
+
+anyDuplicated(patient_data$patient)
+
+which(duplicated(patient_data$patient))
+
+which(duplicated(patient_data$patient) | duplicated(patient_data$patient, fromLast=T))
+
+dup_patients <- which(duplicated(patient_data$patient) | duplicated(patient_data$patient, fromLast=T))
+
+View(patient_data[dup_patients, ])
+
+```
+
+
+
+
+
+
+```{r}
+
+
+head(colnames(BRCA_mir))
+
+
+sel_cols <- c(grep(pattern = "reads_per_million",
+                   x = colnames(BRCA_mir), 
+                   ignore.case = T, value = T))
+
+
+head(sel_cols)
+
+
+goodmir <- BRCA_mir[, sel_cols]
+
+goodmir <- apply(goodmir, MARGIN = 2, FUN = function(x){log(x+1,base = 10)})
+
+dim(BRCA_mir)
+
+dim(goodmir)
+
+
+colnames(goodmir) <- gsub(pattern = "reads_per_million_miRNA_mapped_",
+                          replacement = "",
+                          x = colnames(goodmir))
+
+t_mir <- goodmir %>% 
+  t() %>% 
+  as.data.frame()
+
+colnames(t_mir) <- make.names(BRCA_mir$miRNA_ID)
+
+t_mir <- t_mir %>% 
+  mutate(patient = substr(rownames(.),1,12)) %>% 
+  select(patient, everything())
+
+library(dplyr)
+
+
+
+```
+
+
+
+```{r}
+
+library(dplyr)
+
+
+t_rna <- data.frame(t(norm_rna))
+
+
+
+t_rna <- t_rna %>% 
+  mutate(patient = substr(rownames(.), 1,12 )) %>% 
+  select(patient, everything())
+
+
+
+BRCA_subtype$patient %>% head()
+
+
+```
+
+
+
+# Merging
+
+
+```{r}
+
+
+merged <- full_join(t_rna[,1:90], t_mir[, 1:90], by = "patient")
+
+
+merged <- full_join(merged, BRCA_subtype, by="patient")
+
+
+
+ merged2 <- 
+
+# Expanding data frame with human-readable metadata
+merged2 %>% 
+  mutate(pten_status = case_when(
+    PTEN_mut == "wt" ~ "Wild Type",
+    PTEN_mut == "NA's" ~ "Not Available",
+    is.na(PTEN_mut) ~ "Not Available",
+    PTEN_mut == "-" ~ "Not Available",
+    TRUE ~ "Mutant"
+    )) %>% 
+  select(PTEN_mut, pten_status) %>% 
+  View()
+
+
+
+
+  
+```
+
+
+
+# Cleanup
+
+
+
+```{r}
+sessionInfo()
+
+```
+```{r}
+
+```
+
+
